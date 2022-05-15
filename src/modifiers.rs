@@ -238,6 +238,115 @@ impl InitModifier for PositionSphereModifier {
     }
 }
 
+/// An initialization modifier spawning particles on a cube.
+#[derive(Default, Clone, Copy)]
+pub struct PositionCubeModifier {
+    /// The cube center, relative to the emitter position.
+    pub center: Vec3,
+    /// The box extents (half-sizes).
+    pub extents: Vec3,
+    /// The box rotation
+    pub rotation: Quat,
+    /// The speed of the particles on spawn.
+    pub speed: SpeedVector,
+    /// The shape dimension to spawn from.
+    pub dimension: ShapeDimension,
+}
+
+impl InitModifier for PositionCubeModifier {
+    fn apply(&self, init_layout: &mut InitLayout) {
+        let rotation: Vec4 = self.rotation.into();
+        let extents_code = match self.dimension {
+            ShapeDimension::Surface => {
+                // Constant extents: box faces
+                format!("let extents = {};", self.extents.to_wgsl_string())
+            }
+            ShapeDimension::Volume => {
+                // Random extents in box
+                format!(
+                    "var extents = (rand3() - vec3<f32>(0.5, 0.5, 0.5)) * {};",
+                    self.extents.to_wgsl_string()
+                )
+            }
+        };
+
+        let speed_code = match self.speed {
+            SpeedVector::Normal(speed) => {
+                format!(
+                    "
+    var normal = vec3<f32>(0., 0., 0.);
+    normal[ si[0] ] = locked_axis_sign;
+    ret.vel = rotate_point(normal * {}, rot);
+                    ",
+                    speed.to_wgsl_string()
+                )
+            }
+            SpeedVector::Radial(speed) => {
+                // Velocity away from box center
+                format!("ret.vel = ret.pos * {};", speed.to_wgsl_string())
+            }
+            SpeedVector::Local(speed_x, speed_y, speed_z) => {
+                format!(
+                    "ret.vel = rotate_point(vec3<f32>({}, {}, {}), rot);",
+                    speed_x.to_wgsl_string(),
+                    speed_y.to_wgsl_string(),
+                    speed_z.to_wgsl_string()
+                )
+            }
+            SpeedVector::World(speed_x, speed_y, speed_z) => {
+                format!(
+                    "ret.vel = vec3<f32>({}, {}, {});",
+                    speed_x.to_wgsl_string(),
+                    speed_y.to_wgsl_string(),
+                    speed_z.to_wgsl_string()
+                )
+            }
+        };
+
+        init_layout.position_code = format!(
+            r##"
+    // >>> [PositionCubeModifier]
+    // Box center
+    let c = {0};
+    // Box rotation
+    let rot = {1};
+    // Box extents
+    {2}
+    // Spawn randomly along the (possibly randomized) box surface
+    // Choose a face randomly and find a point on that face
+    var s = rand_positive_int(6u);
+    var si = vec3<u32>(s, s + 1u, s + 2u) % 3u;
+    // si[0] is the selected face: lock the corresponding coordinate
+    var locked_axis_sign = 0.;
+    if (s > 2u) {{
+        locked_axis_sign = 1.;
+    }} else {{
+        locked_axis_sign = -1.;
+    }}
+    ret.pos[ si[0] ] = locked_axis_sign * .5 * extents[ si[0] ];
+    
+    // 2 degrees of freedom for the remaining coordinates
+    ret.pos[ si[1] ] = (rand() - .5) * extents[ si[1] ];
+    ret.pos[ si[2] ] = (rand() - .5) * extents[ si[2] ];
+    
+    // Apply rotation
+    ret.pos = rotate_point(ret.pos, rot);
+    
+    // Speed
+    {3}
+    
+    // Put position in world space
+    ret.pos = ret.pos + c;
+    // <<< [PositionCubeModifier]
+"##,
+            self.center.to_wgsl_string(),
+            rotation.to_wgsl_string(),
+            extents_code,
+            speed_code,
+        );
+    }
+}
+
 /// A modifier modulating each particle's color by sampling a texture.
 #[derive(Default, Clone)]
 pub struct ParticleTextureModifier {

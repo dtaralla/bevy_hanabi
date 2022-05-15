@@ -60,6 +60,12 @@ fn to_float01(u: u32) -> f32 {
     return bitcast<f32>((u & 0x007fffffu) | 0x3f800000u) - 1.;
 }
 
+// Random integer number in [0:n[
+fn rand_positive_int(n: u32) -> u32 {
+    seed = pcg_hash(seed);
+    return seed % n;
+}
+
 // Random floating-point number in [0:1]
 fn rand() -> f32 {
     seed = pcg_hash(seed);
